@@ -1,0 +1,29 @@
+[project]
+name = "backtesting"
+version = "0.1.0"
+description = "Intraday research: scanner (trigger CSVs), backtester (round-trip trade CSVs), viewer (self-contained trade HTML) and position_manager (account simulation over a trades CSV). Reads from the DuckDB cache filled by 34_dataengine and streams bars through the shared `indicators` state."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Tero" },
+]
+dependencies = [
+    "pandas",
+    "numpy",
+    "duckdb",
+    "indicators",
+]
+
+[tool.uv]
+# Run in place (`python -m scanner`, `python -m backtester`,
+# `python -m viewer`, `python -m position_manager`) -- not built
+# as a wheel.
+package = false
+
+[tool.uv.sources]
+# Sibling repo on disk. Anyone cloning THIS project also needs a
+# checkout of `indicators` at ../indicators next to this folder
+# (see README's "Requirements" section). If `indicators` gets
+# published as its own git repo, replace this with a git URL, e.g.
+#   indicators = { git = "https://github.com/<user>/indicators.git" }
+indicators = { path = "../indicators", editable = true }
