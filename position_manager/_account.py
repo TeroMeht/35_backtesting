@@ -126,6 +126,15 @@ class Account:
     equity_curve:       list[EquityPoint]       = field(default_factory=list)
     skips:              list[Skip]              = field(default_factory=list)
 
+    # Count of positions successfully OPENED per (symbol, session_date).
+    # Incremented in try_open only on a successful open, checked at the
+    # top of try_open against rules.max_positions_per_symbol_per_day.
+    # Skipped attempts (max_concurrent, bad_stop, ...) do not
+    # increment -- they do not burn a slot.
+    positions_taken_per_symbol_day: dict[tuple[str, date], int] = field(
+        default_factory=dict
+    )
+
     def __post_init__(self) -> None:
         self.cash = float(self.starting_capital)
 
@@ -146,6 +155,25 @@ class Account:
         the OpenPosition on success; records a Skip and returns None
         on rejection. In either case an EquityPoint is appended."""
         equity_before = self.equity()
+
+        # ---- per-symbol-per-day cap gate ----
+        # Runs FIRST so a same-day re-entry beyond the cap doesn't
+        # waste cash/sizing checks and doesn't confuse the skip audit.
+        # The counter is incremented below only on a successful open,
+        # so a skip here reflects opens taken -- not attempts.
+        key       = (trade.symbol, trade.session_date)
+        cap       = self.rules.max_positions_per_symbol_per_day
+        taken     = self.positions_taken_per_symbol_day.get(key, 0)
+        if cap > 0 and taken >= cap:
+            self._record_skip(
+                seq, trade, "symbol_day_cap",
+                f"already opened {taken} on {trade.symbol} {trade.session_date} "
+                f"(cap={cap})",
+            )
+            self._stamp_equity(trade.entry_ts, "skip", trade.symbol,
+                               note="symbol_day_cap")
+            return None
+
 
         # ---- concurrency gate ----
         if len(self.open_positions) >= self.rules.max_concurrent_positions:
@@ -218,6 +246,7 @@ class Account:
         )
         self.open_positions[seq] = pos
         self._stamp_equity(trade.entry_ts, "entry", trade.symbol)
+        self.positions_taken_per_symbol_day[key] = taken + 1
         return pos
 
     def close(self, seq: int, trade: TradeRow) -> Execution:

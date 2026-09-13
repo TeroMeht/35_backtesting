@@ -30,12 +30,12 @@ RULES = Rules(
     # Fraction of CURRENT equity risked per trade. 0.01 = 1% risk;
     # 0.005 = 0.5%. Position size is
     #   floor(equity * risk_per_trade_pct / (entry - stop)).
-    risk_per_trade_pct       = 0.01,
+    risk_per_trade_pct       = 0.005,
 
     # Cap on entry notional as a fraction of CURRENT equity. Guards
     # against tight-stop trades taking oversized positions. 1.0 to
     # disable (leave sizing entirely to risk_per_trade_pct).
-    max_position_pct         = 0.5,
+    max_position_pct         = 0.6,
 
     # Minimum whole shares to actually take a trade. Skips
     # under-sized entries rather than opening a token position.
@@ -43,16 +43,26 @@ RULES = Rules(
 
     # Max simultaneously open positions. Overlapping entries beyond
     # this get logged to <run>_skips.csv with reason=max_concurrent.
-    max_concurrent_positions = 5,
+    max_concurrent_positions = 10,
 
     # Costs. Charged on BOTH entry and exit fills.
-    commission_per_share     = 0.005,
+    commission_per_share     = 0.0,
     commission_per_trade     = 1.0,
 
     # When True, refuse entries that would push cash negative; the
     # engine also tries a shrunk size that fits cash. False = allow
     # 100%-leverage implicit margin (cash may go negative).
-    require_cash_for_entry   = True,
+    require_cash_for_entry   = False,
+
+    # Max positions opened per (symbol, session_date). Once this many
+    # positions have been OPENED for a ticker on a given session,
+    # further entries for that ticker on that day are skipped with
+    # reason=symbol_day_cap. Only successful opens count against the
+    # cap -- an entry skipped for another reason (max_concurrent,
+    # bad_stop, ...) does not burn a slot. Set 0 (or a negative
+    # value) to disable the cap. 1 = classic one-per-day; 2 = allow
+    # a re-entry after an early stop-out.
+    max_positions_per_symbol_per_day = 2,
 )
 
 # =============================================================================
@@ -113,9 +123,6 @@ def main() -> int:
         print(f"skipped entries : {n_skip}   ({parts})")
     else:
         print(f"skipped entries : 0")
-    print(f"executions csv  : {paths['executions']}")
-    print(f"equity csv      : {paths['equity']}")
-    print(f"skips csv       : {paths['skips']}")
     return 0
 
 

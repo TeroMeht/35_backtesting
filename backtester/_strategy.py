@@ -55,7 +55,7 @@ def had_recent_capitulation(
 def is_close_above_vwap(candle_relatr) -> bool:
     """Trigger candle must close ABOVE its own VWAP.
     relatr = (vwap - close) / atr, so relatr < 0 iff close > vwap."""
-    return float(candle_relatr) > 0.3
+    return float(candle_relatr) >= 0.3
 
 
 # ---------------------------------------------------------------------------

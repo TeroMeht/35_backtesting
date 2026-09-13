@@ -101,6 +101,20 @@ class EODExit:
         return None
 
 
+@dataclass
+class RelatrExit:
+
+    threshold: float
+    name:      str = "relatr"
+
+    def check(self, *, candle, entry_price, stop_level, bars_held):
+        if candle.relatr is None:
+            return None
+        if float(candle.relatr) <= self.threshold:
+            return ExitDecision(reason="target", fill_at_next_open=True)
+        return None
+
+
 # ------------------------------------------------------------------
 # Registry
 # ------------------------------------------------------------------
@@ -113,13 +127,17 @@ class EODExit:
 def build_strategy(
     name: str,
     *,
-    target_distance: float,     # only read by strategies that need it
+    target_distance:       float,   # only read by strategies that need it
+    relatr_exit_threshold: float,   # ditto
 ) -> ExitStrategy:
     if name == "vwap":
         return VWAPExit(distance=target_distance)
     if name == "eod_exit":
         return EODExit()
+    if name == "relatr":
+        return RelatrExit(threshold=relatr_exit_threshold)
     raise ValueError(
-        f"unknown EXIT_STRATEGY {name!r} -- valid: 'vwap', 'eod_exit' "
+        f"unknown EXIT_STRATEGY {name!r} -- "
+        f"valid: 'vwap', 'eod_exit', 'relatr' "
         f"(add more in backtester/_exits.py)",
     )

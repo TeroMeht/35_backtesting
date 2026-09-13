@@ -30,8 +30,8 @@ from ._scan    import Filters
 # and lands in every row so a merged compare file stays keyed.
 SCAN_NAME = "1_baseline_scan"
 
-SCAN_START = date(2026, 5, 11)
-SCAN_END   = date(2026, 9, 11)
+SCAN_START = date(2026, 9, 9)
+SCAN_END   = date(2026, 9, 9)
 
 BAR_SIZE = "2m"
 ATR_SPAN   = 14
@@ -42,9 +42,9 @@ BASELINE_LOOKBACK_DAYS = 5
 # The whole point of many-scans-comparison: change these, re-run,
 # diff the resulting CSVs.
 FILTERS = Filters(
-    relatr_min           = 0.45,
-    cum_volume_min       = 1_000_000,
-    rvol_min             = 1.0,
+    relatr_min           = 0.4,
+    cum_volume_min       = 100_000,
+    rvol_min             = 0.5,
     require_above_sma200 = True,
     intraday_start       = time(16, 30),   # Helsinki
     intraday_end         = time(20,  0),   # Helsinki, exclusive

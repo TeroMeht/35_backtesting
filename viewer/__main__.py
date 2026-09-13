@@ -23,6 +23,14 @@ TITLE = "Reversal-long trade viewer"
 
 ATR_SPAN = 14
 
+# Calendar days of prior 2min bars to include on the chart as raw
+# context. These extra bars are shown as candles + volume only --
+# VWAP / EMA9 / relatr are NOT computed for them (the session's
+# indicators still start fresh on session_date, which is what the
+# strategy sees). Set to 0 to disable and get only the trade's
+# own session as before.
+LOOKBACK_DAYS = 3
+
 OPEN_IN_BROWSER = True
 
 # =============================================================================
@@ -39,11 +47,12 @@ def main() -> int:
     _configure_logging()
 
     out = build_viewer(
-        trades_csv  = TRADES_CSV,
-        output_html = OUTPUT_HTML,
-        bar_size    = BAR_SIZE,
-        atr_span    = ATR_SPAN,
-        title       = TITLE,
+        trades_csv    = TRADES_CSV,
+        output_html   = OUTPUT_HTML,
+        bar_size      = BAR_SIZE,
+        atr_span      = ATR_SPAN,
+        lookback_days = LOOKBACK_DAYS,
+        title         = TITLE,
     )
 
     print("---- VIEWER SUMMARY ----")

@@ -136,6 +136,12 @@ _HTML_TEMPLATE = r"""<!doctype html>
   button:hover { background: #2a3140; }
   button:disabled { opacity: 0.4; cursor: default; }
   #counter { font-variant-numeric: tabular-nums; color: #a9b1bd; }
+  #search { background: #1f2632; color: #e6e6e6; border: 1px solid #313a49;
+            padding: 5px 10px; border-radius: 6px; font-size: 13px;
+            width: 120px; font-family: inherit; }
+  #search::placeholder { color: #7a8395; }
+  #search:focus { outline: none; border-color: #38bdf8; }
+  #search.nomatch { border-color: #ef4444; }
   #subtitle { padding: 8px 14px; background: #131820;
               border-bottom: 1px solid #1e242e; font-size: 13px; color: #cfd6e0; }
   #subtitle b { color: #f6f6f6; }
@@ -161,8 +167,12 @@ _HTML_TEMPLATE = r"""<!doctype html>
   <button id="prev">◀ Prev</button>
   <button id="next">Next ▶</button>
   <span id="counter">–</span>
+  <input id="search" type="text" placeholder="ticker…" spellcheck="false"
+         autocomplete="off"/>
   <span class="spacer"></span>
-  <span style="color:#7a8395; font-size:12px;">Nav: <kbd>←</kbd> <kbd>→</kbd></span>
+  <span style="color:#7a8395; font-size:12px;">
+    Nav: <kbd>←</kbd> <kbd>→</kbd> &nbsp; Search: <kbd>/</kbd>
+  </span>
 </header>
 <div id="subtitle">–</div>
 <div id="chart"></div>
@@ -171,8 +181,38 @@ _HTML_TEMPLATE = r"""<!doctype html>
 <script>
 const DATA = __PAYLOAD__;
 
-let idx = 0;
 const N = DATA.trades.length;
+
+// ---- Filtering by ticker ------------------------------------------
+// `visible` holds indices into DATA.trades that pass the current
+// ticker filter. `pos` is where we are inside `visible`. When the
+// search box is empty, visible = [0, 1, ..., N-1] so navigation
+// walks every trade.
+let visible = [];
+let pos = 0;
+
+function applyFilter(q) {
+  const query = (q || "").trim().toUpperCase();
+  const cur = visible[pos];   // remember which trade we were on
+  if (query === "") {
+    visible = DATA.trades.map((_, i) => i);
+  } else {
+    visible = [];
+    for (let i = 0; i < N; i++) {
+      if (DATA.trades[i].symbol.toUpperCase().includes(query)) {
+        visible.push(i);
+      }
+    }
+  }
+  // Try to stay on the same trade if it survived the filter;
+  // otherwise land on the first match.
+  const stay = visible.indexOf(cur);
+  pos = stay >= 0 ? stay : 0;
+  document.getElementById("search").classList.toggle(
+    "nomatch", query !== "" && visible.length === 0,
+  );
+  render();
+}
 
 function fmt(x, dp) {
   if (x === null || x === undefined || Number.isNaN(x)) return "–";
@@ -197,12 +237,26 @@ function render() {
     Plotly.purge("chart");
     return;
   }
+  if (visible.length === 0) {
+    // Filter matched nothing -- keep last-drawn chart, but tell the
+    // user the counter is at 0/N and disable navigation.
+    document.getElementById("counter").textContent = `0 of ${N}`;
+    document.getElementById("prev").disabled = true;
+    document.getElementById("next").disabled = true;
+    document.getElementById("subtitle").innerHTML =
+      "<b>No trades match this ticker filter.</b>";
+    return;
+  }
+  const idx = visible[pos];
   const t = DATA.trades[idx];
   const s = DATA.sessions[t.session_key];
 
-  document.getElementById("counter").textContent = `${idx+1} of ${N}`;
-  document.getElementById("prev").disabled = (idx === 0);
-  document.getElementById("next").disabled = (idx === N - 1);
+  const total = visible.length === N
+    ? `${pos + 1} of ${N}`
+    : `${pos + 1} of ${visible.length}  (filtered from ${N})`;
+  document.getElementById("counter").textContent = total;
+  document.getElementById("prev").disabled = (pos === 0);
+  document.getElementById("next").disabled = (pos === visible.length - 1);
 
   const pnlClass = t.pnl_pct >= 0 ? "pos" : "neg";
   document.getElementById("subtitle").innerHTML =
@@ -231,13 +285,13 @@ function render() {
   };
   const vwapLine = {
     type: "scatter", mode: "lines", x: xs, y: bars.map(b => b.vwap),
-    name: "VWAP", line: {color: "#c084fc", width: 1.2},
+    name: "VWAP", line: {color: "#ef4444", width: 1.2},
     xaxis: "x", yaxis: "y",
     hovertemplate: "VWAP %{y:.2f}<extra></extra>",
   };
   const ema9Line = {
     type: "scatter", mode: "lines", x: xs, y: bars.map(b => b.ema9),
-    name: "EMA9", line: {color: "#f59e0b", width: 1.2},
+    name: "EMA9", line: {color: "#3b82f6", width: 1.2},
     xaxis: "x", yaxis: "y",
     hovertemplate: "EMA9 %{y:.2f}<extra></extra>",
   };
@@ -341,15 +395,35 @@ function render() {
 }
 
 document.getElementById("prev").addEventListener("click",
-  () => { if (idx > 0)     { idx--; render(); } });
+  () => { if (pos > 0)                    { pos--; render(); } });
 document.getElementById("next").addEventListener("click",
-  () => { if (idx < N - 1) { idx++; render(); } });
+  () => { if (pos < visible.length - 1)   { pos++; render(); } });
+
+// Arrow-key nav walks the FILTERED list. Suppress it while the
+// search box has focus so the user can move the caret with arrows.
 document.addEventListener("keydown", (ev) => {
-  if (ev.key === "ArrowLeft"  && idx > 0)     { idx--; render(); }
-  if (ev.key === "ArrowRight" && idx < N - 1) { idx++; render(); }
+  if (document.activeElement && document.activeElement.id === "search") return;
+  if (ev.key === "ArrowLeft"  && pos > 0)                  { pos--; render(); }
+  if (ev.key === "ArrowRight" && pos < visible.length - 1) { pos++; render(); }
 });
 
-render();
+// Ticker search -- filters live as the user types. `/` from anywhere
+// focuses the box, Esc clears + blurs it. Enter is a no-op (nothing
+// to submit).
+const searchEl = document.getElementById("search");
+searchEl.addEventListener("input", (ev) => applyFilter(ev.target.value));
+searchEl.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") { searchEl.value = ""; applyFilter(""); searchEl.blur(); }
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "/" && document.activeElement !== searchEl) {
+    ev.preventDefault();
+    searchEl.focus();
+    searchEl.select();
+  }
+});
+
+applyFilter("");   // seeds visible = [0..N-1] and calls render()
 </script>
 </body>
 </html>

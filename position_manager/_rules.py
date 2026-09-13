@@ -47,3 +47,14 @@ class Rules:
     # cash below zero. Turn off (False) to allow implicit margin at
     # 100% leverage -- cash may go negative and positions still open.
     require_cash_for_entry: bool = True
+
+    # ---- Per-day per-symbol cap ---------------------------------
+    # Maximum positions that can be OPENED for the same
+    # (symbol, session_date). Subsequent entries for that ticker on
+    # the same session are skipped with reason=symbol_day_cap. Only
+    # successful opens count -- an entry skipped for another reason
+    # (max_concurrent, bad_stop, insufficient_cash, ...) does not
+    # burn a slot. Set 0 or a negative value to disable the cap
+    # (unlimited entries per symbol per day). 1 = classic "one per
+    # ticker per day"; 2 = allow a re-entry after an early stop-out.
+    max_positions_per_symbol_per_day: int = 1

@@ -6,14 +6,16 @@ session boot:
   * ``sma200``         -- SMA of the trailing 200 daily closes ending
                           on the previous session.
   * ``prev_close``     -- previous session's daily close.
-  * ``rvol_baseline``  -- dict[time, avg_volume] built from prior
-                          ``lookback_days`` sessions' intraday bars,
-                          winsorized per-slot the same way 22/32 do.
+  * ``rvol_baseline``  -- dict[time, avg_volume] built from the
+                          ``lookback_days`` sessions strictly BEFORE
+                          the target session, winsorized per-slot
+                          the same way 22/32 do.
 
-Each of these is computed ONCE per (symbol, session_date) up front,
-then the scan streams intraday bars through ``apply_bar`` for the day.
-No look-ahead: every prep value uses only data known BEFORE the
-session opens.
+Baseline mode: **rolling per session**. For every target session
+``s``, the baseline uses the ``lookback_days`` most recent sessions
+this symbol has data for that fall before ``s``. On the next
+session, the window slides forward by one. No look-ahead: every
+prep value uses only data known BEFORE the target session opens.
 """
 from __future__ import annotations
 
@@ -21,11 +23,11 @@ import logging
 from datetime import date, time
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from indicators.atr  import atr_series
 from indicators.sma  import sma_series
-from indicators.rvol import avg_volume_model
 
 
 logger = logging.getLogger(__name__)
@@ -59,45 +61,84 @@ def prep_daily_scalars(
     return float(atr_v), float(sma_v), float(prior["close"].iloc[-1])
 
 
-def build_rvol_baselines(
+def build_rolling_rvol_baselines(
     intraday_df: pd.DataFrame,
     *,
     scan_start: date,
+    scan_end:   date,
     lookback_days: int,
     winsor_k: Optional[float] = 3.0,
-) -> dict[str, dict[time, float]]:
+) -> dict[tuple[str, date], dict[time, float]]:
     """
-    Build one ``{time -> avg_volume}`` dict per symbol using intraday
-    bars in the ``lookback_days`` business days that end the day
-    BEFORE ``scan_start``. One baseline is used across the whole scan
-    window -- close enough for a signal that only needs "did this slot
-    typically trade N shares" and much cheaper than rebuilding daily.
+    Build one ``{time -> avg_volume}`` dict per **(symbol, target
+    session)** in ``[scan_start, scan_end]``. For target session
+    ``s``, the baseline uses the ``lookback_days`` most recent unique
+    sessions this symbol has data for that fall strictly before
+    ``s`` (fewer if the symbol doesn't yet have that much history --
+    down to a single prior session).
+
+    Per-slot mean is winsorized at ``winsor_k * median`` before
+    averaging when ``winsor_k`` is not None, matching the semantics
+    of ``indicators.rvol.avg_volume_model``.
 
     ``intraday_df`` MUST already have ``session_date`` (local) and
     ``ts`` in Europe/Helsinki (i.e. the shape ``_data.read_intraday``
-    returns). Any rows outside the baseline window are dropped.
+    returns). Bars from BEFORE ``scan_start`` are needed to seed the
+    first target sessions' baselines -- pass a frame that reaches
+    back at least ``lookback_days`` sessions before ``scan_start``.
+
+    Vectorization: for each symbol we pivot to a
+    (session_date x time) matrix once, then slide a window over the
+    rows and compute the per-column winsorized mean with numpy
+    ops -- so each target session is a handful of vector ops on a
+    small (N x ~200) frame, not a fresh groupby.
     """
     if intraday_df is None or intraday_df.empty:
         return {}
 
-    # Pick the trailing `lookback_days` unique sessions that end
-    # before scan_start. We take unique session_dates rather than
-    # calendar days so illiquid symbols (with holes) still get the
-    # full N sessions of coverage where they exist.
-    prior = intraday_df.loc[intraday_df["session_date"] < scan_start]
-    if prior.empty:
-        return {}
-    sessions = sorted(prior["session_date"].unique())[-lookback_days:]
-    prior = prior.loc[prior["session_date"].isin(sessions)]
-    if prior.empty:
-        return {}
-
-    df = prior.copy()
+    df = intraday_df.copy()
     df["time"] = df["ts"].dt.time
-    baseline = avg_volume_model(
-        df[["symbol", "time", "volume"]], k=winsor_k,
-    )
-    out: dict[str, dict[time, float]] = {}
-    for sym, grp in baseline.groupby("symbol"):
-        out[sym] = dict(zip(grp["time"], grp["avg_volume"].astype(float)))
+
+    out: dict[tuple[str, date], dict[time, float]] = {}
+
+    for sym, sym_df in df.groupby("symbol"):
+        # Wide: rows = session_date (sorted asc), cols = time slot,
+        # values = per-slot volume. Missing slots become NaN.
+        pv = sym_df.pivot_table(
+            index="session_date",
+            columns="time",
+            values="volume",
+            aggfunc="sum",
+        ).sort_index()
+
+        sessions_avail = pv.index.tolist()
+        for i, s in enumerate(sessions_avail):
+            if not (scan_start <= s <= scan_end):
+                continue
+            # Prior lookback_days sessions strictly before s.
+            window_start = max(0, i - lookback_days)
+            if window_start >= i:
+                continue                             # no prior sessions
+            window = pv.iloc[window_start:i]         # (n_prior x n_slots)
+
+            if winsor_k is not None:
+                med = window.median(axis=0)
+                # Cap per-column at k * median, but only where median
+                # is positive (matches avg_volume_model's guard so a
+                # median-0 column isn't zeroed by clip(upper=0)).
+                cap = (winsor_k * med).where(med > 0)
+                clipped = window.clip(upper=cap, axis=1)
+                avg = clipped.mean(axis=0, skipna=True)
+            else:
+                avg = window.mean(axis=0, skipna=True)
+
+            # Drop slots where the baseline is NaN or zero -- the
+            # RVOL formula treats a missing slot as "no baseline
+            # contribution", same as before.
+            avg = avg.dropna()
+            avg = avg[avg > 0]
+            if avg.empty:
+                continue
+            out[(sym, s)] = {t: float(v) for t, v in avg.items()}
+
     return out

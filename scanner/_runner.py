@@ -18,7 +18,7 @@ import pandas as pd
 
 from ._config import settings
 from ._data   import open_conn, read_daily, read_intraday
-from ._prep   import build_rvol_baselines, prep_daily_scalars
+from ._prep   import build_rolling_rvol_baselines, prep_daily_scalars
 from ._scan   import Filters, Trigger, scan_symbol_day
 
 
@@ -91,16 +91,20 @@ def run_scan(
         logger.info("  intraday read: %d rows, %.2fs",
                     len(intraday), _time.perf_counter() - t0)
 
-        # ---- baselines (one per symbol, one build) --------------------------
+        # ---- baselines (ROLLING: one per (symbol, session)) ----------------
+        # For each session in the scan window, the baseline uses the
+        # `baseline_lookback_days` sessions strictly before it for the
+        # same symbol. Sliding window; no year-long freeze.
         t0 = _time.perf_counter()
-        baselines = build_rvol_baselines(
+        baselines = build_rolling_rvol_baselines(
             intraday,
             scan_start   = scan_start,
+            scan_end     = scan_end,
             lookback_days = baseline_lookback_days,
             winsor_k     = baseline_winsor_k,
         )
-        logger.info("built RVOL baselines for %d/%d symbols, %.2fs",
-                    len(baselines), len(universe), _time.perf_counter() - t0)
+        logger.info("built rolling RVOL baselines for %d (symbol,session) pairs, %.2fs",
+                    len(baselines), _time.perf_counter() - t0)
 
         # Slice the scan-window intraday bars to a per-(symbol,session) view.
         t0 = _time.perf_counter()
@@ -139,14 +143,6 @@ def run_scan(
     for i_sym, symbol in enumerate(universe, start=1):
         logger.debug("scanning %s (%d/%d)", symbol, i_sym, len(universe))
         daily_df = daily_by_symbol.get(symbol)
-        baseline = baselines.get(symbol)
-        if baseline is None:
-            skipped_no_baseline += len(sessions)
-            if i_sym % heartbeat_every == 0 or i_sym == len(universe):
-                logger.info("  progress: %d/%d symbols, %d triggers so far (%.1fs)",
-                            i_sym, len(universe), len(triggers),
-                            _time.perf_counter() - scan_t0)
-            continue
         for sess in sessions:
             if daily_df is None:
                 skipped_no_daily += 1
@@ -163,6 +159,14 @@ def run_scan(
             bars = bars_by_key.get((symbol, sess))
             if bars is None or bars.empty:
                 skipped_no_bars += 1
+                continue
+
+            # ROLLING baseline: fresh window per (symbol, session).
+            # A missing entry means this symbol didn't have enough
+            # prior sessions to seed one (first days of coverage).
+            baseline = baselines.get((symbol, sess))
+            if baseline is None:
+                skipped_no_baseline += 1
                 continue
 
             checked += 1

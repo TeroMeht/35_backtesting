@@ -55,10 +55,12 @@ STOP_OFFSET = 0.02
 ATR_SPAN = 14
 
 # ---- Exit knobs -------------------------------------------------------------
-EXIT_STRATEGY = "vwap"
-#EXIT_STRATEGY = "eod_exit"  # alternative: "vwap"
+#EXIT_STRATEGY = "vwap"
+#EXIT_STRATEGY = "eod_exit"  # alternatives: "vwap", "relatr"
+EXIT_STRATEGY = "relatr"  # alternatives: "vwap", "eod_exit"
 
-TARGET_DISTANCE = 0.1        # only read by the "vwap" strategy
+TARGET_DISTANCE = 0.1         # only read by the "vwap" strategy
+RELATR_EXIT_THRESHOLD = -0.4   # only read by the "relatr" strategy
 SESSION_END = time(23, 0)
 EOD_FORCE_CLOSE = True
 
@@ -77,7 +79,8 @@ def main() -> int:
 
     exit_strategy = build_strategy(
         EXIT_STRATEGY,
-        target_distance = TARGET_DISTANCE,
+        target_distance       = TARGET_DISTANCE,
+        relatr_exit_threshold = RELATR_EXIT_THRESHOLD,
     )
 
     trades = run_backtest(
