@@ -17,7 +17,7 @@ from datetime import date, time
 
 from ._config  import settings
 from ._data    import load_universe, open_conn
-from ._output  import write_triggers_csv
+from ._output  import triggers_csv_path
 from ._runner  import run_scan
 from ._scan    import Filters
 
@@ -30,8 +30,8 @@ from ._scan    import Filters
 # and lands in every row so a merged compare file stays keyed.
 SCAN_NAME = "1_baseline_scan"
 
-SCAN_START = date(2026, 9, 9)
-SCAN_END   = date(2026, 9, 9)
+SCAN_START = date(2026, 9, 1)
+SCAN_END   = date(2026, 9, 11)
 
 BAR_SIZE = "2m"
 ATR_SPAN   = 14
@@ -42,9 +42,9 @@ BASELINE_LOOKBACK_DAYS = 5
 # The whole point of many-scans-comparison: change these, re-run,
 # diff the resulting CSVs.
 FILTERS = Filters(
-    relatr_min           = 0.4,
+    relatr_min           = 0.3,
     cum_volume_min       = 100_000,
-    rvol_min             = 0.5,
+    rvol_min             = 1,
     require_above_sma200 = True,
     intraday_start       = time(16, 30),   # Helsinki
     intraday_end         = time(20,  0),   # Helsinki, exclusive
@@ -70,7 +70,7 @@ def main() -> int:
         conn.close()
     logging.info("loaded %d symbols from DUCKDB", len(universe))
 
-    triggers = run_scan(
+    summary = run_scan(
         scan_name  = SCAN_NAME,
         universe   = universe,
         scan_start = SCAN_START,
@@ -80,21 +80,27 @@ def main() -> int:
         atr_span   = ATR_SPAN,
         sma_period = SMA_PERIOD,
         baseline_lookback_days = BASELINE_LOOKBACK_DAYS,
+        csv_path   = triggers_csv_path(SCAN_NAME),
     )
-
-    path = write_triggers_csv(triggers, scan_name=SCAN_NAME)
 
     print("---- SCAN SUMMARY ----")
     print(f"scan_name    : {SCAN_NAME}")
     print(f"window       : [{SCAN_START}..{SCAN_END}]  bar_size={BAR_SIZE}")
-    print(f"universe     : {len(universe)} symbols")
+    print(f"universe     : {summary.n_symbols_universe} symbols  "
+          f"(scanned {summary.n_symbols_scanned}, "
+          f"no_data {summary.n_symbols_no_data})")
     print(f"filters      : relatr>={FILTERS.relatr_min}  "
           f"cum_vol>={int(FILTERS.cum_volume_min):,}  "
           f"rvol>={FILTERS.rvol_min}  "
           f"sma200={'on' if FILTERS.require_above_sma200 else 'off'}  "
           f"window={FILTERS.intraday_start}..{FILTERS.intraday_end}")
-    print(f"triggers     : {len(triggers)}")
-    print(f"csv          : {path}")
+    print(f"checked      : {summary.n_checked:,} (symbol,session) pairs")
+    print(f"skipped      : no_daily={summary.skipped_no_daily} "
+          f"no_baseline={summary.skipped_no_baseline} "
+          f"no_bars={summary.skipped_no_bars}")
+    print(f"triggers     : {summary.n_triggers}")
+    print(f"csv          : {summary.csv_path}")
+    print(f"elapsed      : {summary.elapsed_seconds:.1f}s")
     return 0
 
 

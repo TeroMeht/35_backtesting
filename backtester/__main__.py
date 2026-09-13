@@ -42,8 +42,8 @@ BAR_SIZE = "2m"
 # FILTERS.relatr_min doubles as the capitulation threshold in the entry loop.
 FILTERS = Filters(
     relatr_min           = 0.45,
-    cum_volume_min       = 1_000_000.0,
-    rvol_min             = 1.5,
+    cum_volume_min       = 500_000,
+    rvol_min             = 1.0,
     require_above_sma200 = True,
     intraday_start       = time(16, 30),
     intraday_end         = time(20,  0),
@@ -60,7 +60,7 @@ ATR_SPAN = 14
 EXIT_STRATEGY = "relatr"  # alternatives: "vwap", "eod_exit"
 
 TARGET_DISTANCE = 0.1         # only read by the "vwap" strategy
-RELATR_EXIT_THRESHOLD = -0.4   # only read by the "relatr" strategy
+RELATR_EXIT_THRESHOLD = -0.40   # only read by the "relatr" strategy
 SESSION_END = time(23, 0)
 EOD_FORCE_CLOSE = True
 
@@ -103,9 +103,6 @@ def main() -> int:
     n_target = sum(1 for t in trades if t.exit_reason == "target")
     n_stop   = sum(1 for t in trades if t.exit_reason == "stop")
     n_eod    = sum(1 for t in trades if t.exit_reason == "eod")
-    total_pnl = sum(t.pnl for t in trades)
-    avg_pnl_pct = (sum(t.pnl_pct for t in trades) / n) if n else 0.0
-    win_rate = (sum(1 for t in trades if t.pnl > 0) / n) if n else 0.0
 
     print("---- BACKTEST SUMMARY ----")
     print(f"backtest_name : {BACKTEST_NAME}")
@@ -120,10 +117,6 @@ def main() -> int:
     print(f"exit strategy : {exit_strategy.name}")
     print(f"stop_offset   : {STOP_OFFSET}    target_distance : {TARGET_DISTANCE}")
     print(f"trades        : {n}   (target={n_target}  stop={n_stop}  eod={n_eod})")
-    print(f"total pnl     : {total_pnl:.4f}")
-    print(f"avg pnl %     : {avg_pnl_pct*100:.3f}%")
-    print(f"win rate      : {win_rate*100:.1f}%")
-    print(f"csv           : {path}")
     return 0
 
 

@@ -51,7 +51,6 @@ def main() -> int:
         output_html   = OUTPUT_HTML,
         bar_size      = BAR_SIZE,
         atr_span      = ATR_SPAN,
-        lookback_days = LOOKBACK_DAYS,
         title         = TITLE,
     )
 

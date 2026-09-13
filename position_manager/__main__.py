@@ -30,7 +30,7 @@ RULES = Rules(
     # Fraction of CURRENT equity risked per trade. 0.01 = 1% risk;
     # 0.005 = 0.5%. Position size is
     #   floor(equity * risk_per_trade_pct / (entry - stop)).
-    risk_per_trade_pct       = 0.005,
+    risk_per_trade_pct       = 0.01,
 
     # Cap on entry notional as a fraction of CURRENT equity. Guards
     # against tight-stop trades taking oversized positions. 1.0 to
@@ -43,7 +43,7 @@ RULES = Rules(
 
     # Max simultaneously open positions. Overlapping entries beyond
     # this get logged to <run>_skips.csv with reason=max_concurrent.
-    max_concurrent_positions = 10,
+    max_concurrent_positions = 100,
 
     # Costs. Charged on BOTH entry and exit fills.
     commission_per_share     = 0.0,
@@ -62,7 +62,7 @@ RULES = Rules(
     # bad_stop, ...) does not burn a slot. Set 0 (or a negative
     # value) to disable the cap. 1 = classic one-per-day; 2 = allow
     # a re-entry after an early stop-out.
-    max_positions_per_symbol_per_day = 2,
+    max_positions_per_symbol_per_day = 3,
 )
 
 # =============================================================================
