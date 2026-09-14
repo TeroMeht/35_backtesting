@@ -112,6 +112,13 @@ def run_backtest(
             skipped_no_bars += 1
             continue
 
+        # Carry the scan CSV's day-level premarket % change onto every
+        # Trade this row produces. NaN in the CSV -> None on the Trade.
+        pm_raw = getattr(row, "premarket_change_pct", None)
+        scan_pm_pct = (
+            None if pm_raw is None or pd.isna(pm_raw) else float(pm_raw)
+        )
+
         replayed += 1
         session_trades = run_session(
             backtest_name    = backtest_name,
@@ -130,6 +137,7 @@ def run_backtest(
             scan_trigger_ts     = row.trigger_ts,
             scan_trigger_relatr = float(row.relatr),
             scan_trigger_rvol   = float(row.rvol),
+            scan_premarket_change_pct = scan_pm_pct,
         )
         trades.extend(session_trades)
 

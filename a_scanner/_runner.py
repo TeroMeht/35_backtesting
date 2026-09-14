@@ -40,8 +40,11 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from indicators.atr  import atr_series
-from indicators.sma  import sma_series
+from indicators.atr              import atr_series
+from indicators.sma              import sma_series
+from indicators.premarket_change import (
+    DEFAULT_MARKET_OPEN, next_premarket_change_pct,
+)
 
 from ._config import settings
 from ._data   import open_conn, read_daily, read_intraday
@@ -266,6 +269,21 @@ def run_scan(
                         skipped_no_baseline += 1
                         continue
 
+                    # Day-level premarket % change: last close strictly
+                    # before market open vs prev daily close. None when
+                    # the session has no premarket bars (weekend fill,
+                    # early trading halt, etc.) -- next_premarket_change_pct
+                    # also returns None on missing / non-positive prev_close.
+                    local_times = bars["ts"].dt.tz_convert(session_tz).dt.time
+                    pm_mask     = local_times < DEFAULT_MARKET_OPEN
+                    if pm_mask.any():
+                        pm_last = float(bars.loc[pm_mask, "close"].iloc[-1])
+                        premarket_change_pct = next_premarket_change_pct(
+                            pm_last, prev_close,
+                        )
+                    else:
+                        premarket_change_pct = None
+
                     n_checked += 1
                     trig = scan_symbol_day(
                         scan_name    = scan_name,
@@ -275,6 +293,7 @@ def run_scan(
                         atr          = atr,
                         sma200       = sma200,
                         prev_close   = prev_close,
+                        premarket_change_pct = premarket_change_pct,
                         rvol_baseline = baseline,
                         filters      = filters,
                         session_tz   = session_tz,

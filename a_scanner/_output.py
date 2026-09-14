@@ -37,7 +37,7 @@ TRIGGER_COLS: list[str] = [
     "scan_name", "symbol", "session_date", "trigger_ts",
     "trigger_time", "open", "high", "low", "close", "volume",
     "vwap", "relatr", "rvol", "cum_volume", "sma200", "atr",
-    "prev_close",
+    "prev_close", "premarket_change_pct",
 ]
 
 

@@ -6,7 +6,9 @@ the DuckDB cache needed.
 
 ``Filters`` is duck-typed here: it just needs the attributes
 ``relatr_min``, ``cum_volume_min``, ``rvol_min``,
-``require_above_sma200``, ``intraday_start``, ``intraday_end``.
+``require_above_sma200``, ``intraday_start``, ``intraday_end``,
+``premarket_change_pct_min``, ``premarket_change_pct_max`` (the last
+two default to ``None`` = don't filter that side).
 The dataclass lives at the top of ``backtester/__main__.py``.
 """
 from __future__ import annotations
@@ -54,11 +56,15 @@ def load_and_filter_scan_csv(path, filters) -> pd.DataFrame:
     required = [
         "scan_name", "symbol", "session_date", "trigger_ts", "trigger_time",
         "low", "close", "vwap", "relatr", "rvol", "cum_volume", "sma200",
-        "atr", "prev_close",
+        "atr", "prev_close", "premarket_change_pct",
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
-        raise ValueError(f"{p}: scan CSV missing columns {missing}")
+        raise ValueError(
+            f"{p}: scan CSV missing columns {missing} -- re-run the "
+            f"scanner; premarket_change_pct was added in the current "
+            f"schema.",
+        )
 
     # Types
     df["session_date"] = pd.to_datetime(df["session_date"]).dt.date
@@ -73,6 +79,12 @@ def load_and_filter_scan_csv(path, filters) -> pd.DataFrame:
         ts = ts.dt.tz_convert("Europe/Helsinki")
     df["trigger_ts"]   = ts
     df["trigger_time"] = df["trigger_time"].map(_parse_time)
+    # NaN-safe numeric so the bounds comparisons below propagate NaN
+    # (a row with unknown premarket_change_pct fails BOTH ``>= min``
+    # and ``<= max``, so any active bound drops it -- see below).
+    df["premarket_change_pct"] = pd.to_numeric(
+        df["premarket_change_pct"], errors="coerce",
+    )
 
     n_in = len(df)
 
@@ -85,6 +97,16 @@ def load_and_filter_scan_csv(path, filters) -> pd.DataFrame:
     )
     if filters.require_above_sma200:
         keep &= (df["close"] > df["sma200"])
+
+    # Premarket-change bounds. Either bound may be None to skip that
+    # side. NaN premarket values fail any active bound (an unknown
+    # premarket move cannot be confirmed to fall inside the window).
+    pm_min = getattr(filters, "premarket_change_pct_min", None)
+    pm_max = getattr(filters, "premarket_change_pct_max", None)
+    if pm_min is not None:
+        keep &= (df["premarket_change_pct"] >= pm_min)
+    if pm_max is not None:
+        keep &= (df["premarket_change_pct"] <= pm_max)
 
     out = df.loc[keep].sort_values(
         ["symbol", "session_date"],

@@ -30,7 +30,7 @@ from ._scan    import Filters
 # and lands in every row so a merged compare file stays keyed.
 SCAN_NAME = "1_baseline_scan"
 
-SCAN_START = date(2026, 9, 1)
+SCAN_START = date(2026, 8, 27)
 SCAN_END   = date(2026, 9, 11)
 
 BAR_SIZE = "2m"
@@ -39,8 +39,6 @@ SMA_PERIOD = 200
 BASELINE_LOOKBACK_DAYS = 5
 
 # ---- Filter thresholds ------------------------------------------------------
-# The whole point of many-scans-comparison: change these, re-run,
-# diff the resulting CSVs.
 FILTERS = Filters(
     relatr_min           = 0.3,
     cum_volume_min       = 100_000,
@@ -48,6 +46,10 @@ FILTERS = Filters(
     require_above_sma200 = True,
     intraday_start       = time(16, 30),   # Helsinki
     intraday_end         = time(20,  0),   # Helsinki, exclusive
+    # Premarket % change bounds. Set either to None to disable that
+    # side (both None => filter is off, behaves like before).
+    premarket_change_pct_min = None,
+    premarket_change_pct_max = None,
 )
 
 # =============================================================================
@@ -89,11 +91,19 @@ def main() -> int:
     print(f"universe     : {summary.n_symbols_universe} symbols  "
           f"(scanned {summary.n_symbols_scanned}, "
           f"no_data {summary.n_symbols_no_data})")
+    pm_lo = FILTERS.premarket_change_pct_min
+    pm_hi = FILTERS.premarket_change_pct_max
+    pm_desc = (
+        "off" if pm_lo is None and pm_hi is None
+        else f"[{'-inf' if pm_lo is None else pm_lo}"
+             f"..{'+inf' if pm_hi is None else pm_hi}]%"
+    )
     print(f"filters      : relatr>={FILTERS.relatr_min}  "
           f"cum_vol>={int(FILTERS.cum_volume_min):,}  "
           f"rvol>={FILTERS.rvol_min}  "
           f"sma200={'on' if FILTERS.require_above_sma200 else 'off'}  "
-          f"window={FILTERS.intraday_start}..{FILTERS.intraday_end}")
+          f"window={FILTERS.intraday_start}..{FILTERS.intraday_end}  "
+          f"premarket_change_pct={pm_desc}")
     print(f"checked      : {summary.n_checked:,} (symbol,session) pairs")
     print(f"skipped      : no_daily={summary.skipped_no_daily} "
           f"no_baseline={summary.skipped_no_baseline} "

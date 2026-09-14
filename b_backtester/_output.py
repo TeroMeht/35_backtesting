@@ -30,6 +30,7 @@ _COLS = [
     "exit_ts", "exit_price", "exit_reason",
     "pnl", "pnl_pct", "bars_held",
     "scan_trigger_ts", "scan_trigger_relatr", "scan_trigger_rvol",
+    "scan_premarket_change_pct",
 ]
 
 

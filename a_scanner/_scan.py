@@ -40,12 +40,19 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Filters:
     """Trigger criteria. All conditions must hold at the same bar."""
-    relatr_min:     float = 0.45
-    cum_volume_min: float = 1_000_000.0
-    rvol_min:       float = 1.5
-    require_above_sma200: bool = True
-    intraday_start: time  = time(16, 30)   # Helsinki local
-    intraday_end:   time  = time(20,  0)   # Helsinki local, exclusive
+    relatr_min:     float
+    cum_volume_min: float
+    rvol_min:       float
+    require_above_sma200: bool
+    intraday_start: time
+    intraday_end:   time
+    # Premarket % change bounds. Either may be None to disable that
+    # side. When a bound is set and the day's ``premarket_change_pct``
+    # is None (no premarket bars, or prev_close missing / non-positive),
+    # the day cannot pass -- a premarket setup can't be confirmed
+    # without premarket data.
+    premarket_change_pct_min: Optional[float] = None
+    premarket_change_pct_max: Optional[float] = None
 
 
 @dataclass
@@ -70,6 +77,9 @@ class Trigger:
     sma200:        float
     atr:           float
     prev_close:    float
+    # Day-level premarket % change vs prev_close. ``None`` when the
+    # session had no premarket bars, or prev_close wasn't positive.
+    premarket_change_pct: Optional[float] = None
 
 
 def scan_symbol_day(
@@ -81,6 +91,7 @@ def scan_symbol_day(
     atr: float,
     sma200: float,
     prev_close: float,
+    premarket_change_pct: Optional[float],   # None if no premarket bars this session
     rvol_baseline: dict[time, float],
     filters: Filters,
     session_tz: ZoneInfo,
@@ -136,6 +147,17 @@ def scan_symbol_day(
             continue
         if filters.require_above_sma200 and candle.close <= sma200:
             continue
+        # Premarket change bounds -- day-level, so evaluated per bar
+        # but the value is constant across the session. If a bound is
+        # set and we have no premarket value, the day cannot pass.
+        if filters.premarket_change_pct_min is not None:
+            if (premarket_change_pct is None
+                    or premarket_change_pct < filters.premarket_change_pct_min):
+                continue
+        if filters.premarket_change_pct_max is not None:
+            if (premarket_change_pct is None
+                    or premarket_change_pct > filters.premarket_change_pct_max):
+                continue
 
         # Passing bar. Keep only if it beats the running best on
         # relatr. Strict ``>`` means a tie leaves the earlier bar
@@ -159,6 +181,7 @@ def scan_symbol_day(
                 sma200       = float(sma200),
                 atr          = float(atr),
                 prev_close   = float(prev_close),
+                premarket_change_pct = premarket_change_pct,
             )
 
     return best

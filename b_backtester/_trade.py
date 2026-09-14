@@ -63,3 +63,6 @@ class Trade:
     scan_trigger_ts:     pd.Timestamp
     scan_trigger_relatr: float
     scan_trigger_rvol:   float
+    # Day-level premarket % change carried from the scan CSV.
+    # ``None`` / NaN when the scan had no premarket data that session.
+    scan_premarket_change_pct: Optional[float] = None

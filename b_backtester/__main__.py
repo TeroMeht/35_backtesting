@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import time
 from pathlib import Path
+from typing import Optional
 
 from ._config import settings
 from ._exits  import build_strategy
@@ -24,6 +25,13 @@ class Filters:
     require_above_sma200: bool
     intraday_start: time
     intraday_end:   time
+    # Premarket % change bounds carried in the scan CSV. Either may be
+    # None to disable that side. When a bound is set and a scan row's
+    # premarket_change_pct is NaN (session had no premarket data), the
+    # row is dropped -- can't confirm a premarket-shaped setup without
+    # a premarket number.
+    premarket_change_pct_min: Optional[float] = None
+    premarket_change_pct_max: Optional[float] = None
 
 
 # =============================================================================
@@ -47,6 +55,9 @@ FILTERS = Filters(
     require_above_sma200 = True,
     intraday_start       = time(16, 30),
     intraday_end         = time(20,  0),
+    # Premarket % change gate. Set either to None to disable that side
+    premarket_change_pct_min = None,
+    premarket_change_pct_max = 2.0,
 )
 
 # ---- Entry knobs ------------------------------------------------------------
@@ -108,10 +119,18 @@ def main() -> int:
     print(f"backtest_name : {BACKTEST_NAME}")
     print(f"input scan    : {INPUT_SCAN_CSV}")
     print(f"bar_size      : {BAR_SIZE}")
+    pm_lo = FILTERS.premarket_change_pct_min
+    pm_hi = FILTERS.premarket_change_pct_max
+    pm_desc = (
+        "off" if pm_lo is None and pm_hi is None
+        else f"[{'-inf' if pm_lo is None else pm_lo}"
+             f"..{'+inf' if pm_hi is None else pm_hi}]%"
+    )
     print(f"filters       : relatr>={FILTERS.relatr_min}  "
           f"cum_vol>={int(FILTERS.cum_volume_min):,}  "
           f"rvol>={FILTERS.rvol_min}  "
-          f"sma200={'on' if FILTERS.require_above_sma200 else 'off'}")
+          f"sma200={'on' if FILTERS.require_above_sma200 else 'off'}  "
+          f"premarket_change_pct={pm_desc}")
     print(f"entry window  : {FILTERS.intraday_start}..{FILTERS.intraday_end}    "
           f"session_end : {SESSION_END}")
     print(f"exit strategy : {exit_strategy.name}")

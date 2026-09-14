@@ -22,9 +22,10 @@ Two Helsinki-local time windows shape the loop:
 Every bar goes through this sequence:
 
     1) apply_bar        -- indicators up to date for this bar
-    2) fill pending_entry via a STOP-BUY at the signal candle's high
-       (bar.high > signal.high -> fill = max(bar.open, signal.high);
-        else the signal expires -- single-bar validity, no carry-forward)
+    2) fill pending_entry via a MARKET-ON-OPEN at this bar's open
+       (unconditional; a same-bar gap through the hard stop is the only
+        skip -- see the block for details. Single-bar validity, no
+        carry-forward -- a new crossover has to form for another chance.)
     3) fill pending strategy exit at candle.open (queued from previous
        bar's close by exit_strategy.check)
     4) roll rolling windows (relatr + low)
@@ -32,8 +33,8 @@ Every bar goes through this sequence:
     6) intrabar stop check     (in trading day, in-position only)
     7) strategy exit check     (in trading day, in-position only)
     8) signal check            (in entry window, flat only; on pass, queue
-                                a pending_entry whose stop-buy level is
-                                THIS bar's high for the next bar)
+                                a pending_entry that fills at the NEXT
+                                bar's open)
 
 The rules themselves live in tiny pure modules:
 
@@ -66,7 +67,10 @@ from indicators.session_state import SymbolSessionState
 
 from ._exits    import ExitStrategy
 from ._position import is_stop_hit_intrabar, stop_fill_price
-from ._strategy import compute_stop_level, is_entry_trigger
+from ._strategy import (
+    compute_stop_level, is_entry_trigger,
+    had_recent_capitulation, is_ema9_crossover_up, is_close_above_vwap,
+)
 from ._trade    import Trade
 
 
@@ -124,6 +128,9 @@ def run_session(
     scan_trigger_ts:     pd.Timestamp,
     scan_trigger_relatr: float,
     scan_trigger_rvol:   float,
+    # Day-level premarket % change from the scan CSV. None when the
+    # scan had no premarket data for that session.
+    scan_premarket_change_pct: Optional[float] = None,
 ) -> list[Trade]:
     """
     Replay one (symbol, session_date). Emit one Trade per completed
@@ -145,6 +152,15 @@ def run_session(
     low_window:    deque[float] = deque(maxlen=capitulation_bars)
 
     trades: list[Trade] = []
+
+    # ------- diagnostic counters (only read by the end-of-session
+    # "no trade" log; do not affect any decision) -----------------
+    n_bars_in_window     = 0   # bars where entry check actually ran
+    n_cap_hits           = 0   # trailing relatr window had a >= relatr_min
+    n_crossover_hits     = 0   # prev.close < ema9 AND close > ema9 this bar
+    n_relatr_gate_hits   = 0   # this bar had relatr >= 0.3 (misnamed vwap gate)
+    n_full_trigger       = 0   # is_entry_trigger returned True
+    n_signals_below_stop = 0   # next-bar open gapped through the stop
 
     # Position state.
     in_position:       bool                    = False
@@ -198,6 +214,7 @@ def run_session(
             scan_trigger_ts     = scan_trigger_ts,
             scan_trigger_relatr = float(scan_trigger_relatr),
             scan_trigger_rvol   = float(scan_trigger_rvol),
+            scan_premarket_change_pct = scan_premarket_change_pct,
         ))
         in_position       = False
         entry_ts          = None
@@ -219,36 +236,30 @@ def run_session(
 
         # 2) fill pending_entry --------------------------------------------
         # Signal-candle model: the previous bar was the ema9 crossover
-        # (the SIGNAL candle). Entry is a STOP-BUY at that signal candle's
-        # high, valid for THIS bar only. Fill rules:
+        # (the SIGNAL candle). Entry is a MARKET-ON-OPEN at THIS bar --
+        # we fill unconditionally at this bar's open. No stop-buy level,
+        # no "next-bar high must clear signal high" gate: a legitimate
+        # ema9 crossover shouldn't be dropped just because the next bar
+        # happens to open flat or gap slightly down.
         #
-        #     if bar.high >  signal.high   -> price broke above the level
-        #                                     -> fill = max(bar.open, signal.high)
-        #                                       (gap-up fills at open; otherwise
-        #                                        at the stop-buy level itself)
-        #     else                         -> level not taken out this bar
-        #                                     -> signal expires, no fill
-        #
-        # Either way the signal is CONSUMED on this bar -- no carry-forward.
-        # A new crossover has to form for another chance.
-        #
-        # Sanity gate: if the resulting fill would already be at or below
-        # the hard stop level, skip the entry to avoid a same-bar
-        # zero-or-worse in-and-out.
+        # Sanity gate kept: if the fill would already be at or below the
+        # hard stop level (i.e. the next-bar open gapped down through
+        # the trailing-lows stop), skip the entry -- a same-bar zero-or-
+        # worse trade adds noise, not signal.
         if pending_entry is not None:
             if not in_position:
-                sig       = pending_entry
-                entry_lvl = sig["trigger_high"]   # stop-buy level = signal.high
-                stop_lvl  = sig["stop_level"]
-                if float(candle.high) > entry_lvl:
-                    fill = max(float(candle.open), float(entry_lvl))
-                    if fill > stop_lvl:
-                        in_position      = True
-                        entry_ts         = ts_
-                        entry_price      = fill
-                        entry_bar_idx    = i
-                        stop_level       = stop_lvl
-                        trigger_snapshot = sig
+                sig      = pending_entry
+                stop_lvl = sig["stop_level"]
+                fill     = float(candle.open)
+                if fill > stop_lvl:
+                    in_position      = True
+                    entry_ts         = ts_
+                    entry_price      = fill
+                    entry_bar_idx    = i
+                    stop_level       = stop_lvl
+                    trigger_snapshot = sig
+                else:
+                    n_signals_below_stop += 1
                 # Consume the signal regardless of outcome (single-bar validity).
                 pending_entry = None
             else:
@@ -325,6 +336,23 @@ def run_session(
 
         # 8) entry trigger check (entry window only, flat only) -------------
         if in_entry_window and not in_position and pending_entry is None:
+            n_bars_in_window += 1
+            # Sub-condition hits for the end-of-session diagnostic.
+            # Mirrors is_entry_trigger's warmup check so a bar only
+            # contributes to the breakdown once it can be a trigger
+            # at all.
+            if (prev_close is not None
+                    and candle.ema9 is not None
+                    and len(relatr_window) >= capitulation_bars):
+                if had_recent_capitulation(relatr_window, filters.relatr_min):
+                    n_cap_hits += 1
+                if is_ema9_crossover_up(
+                    prev_close, float(candle.close), candle.ema9,
+                ):
+                    n_crossover_hits += 1
+                if candle.relatr is not None and is_close_above_vwap(candle.relatr):
+                    n_relatr_gate_hits += 1
+
             if is_entry_trigger(
                 prev_close   = prev_close,
                 curr_close   = float(candle.close),
@@ -334,6 +362,7 @@ def run_session(
                 capitulation_bars      = capitulation_bars,
                 capitulation_threshold = filters.relatr_min,
             ):
+                n_full_trigger += 1
                 stop_at_signal = compute_stop_level(low_window, stop_offset)
                 pending_entry  = _trigger_snapshot(
                     candle, ts_, relatr_window, low_window, stop_at_signal,
@@ -341,4 +370,31 @@ def run_session(
 
         prev_close = float(candle.close)
 
+    if not trades:
+        # Pick the tightest miss the counters can prove.
+        if n_bars_in_window == 0:
+            reason = "no bars in entry window"
+        elif n_full_trigger > 0:
+            # Under market-on-open fills the only reason a signal can
+            # produce no trade is the same-bar stop gap. If a signal
+            # neither filled nor tripped the stop-gap, it's a rare
+            # defensive branch (see the pending_entry block).
+            parts = [f"{n_full_trigger} signal(s) fired"]
+            if n_signals_below_stop:
+                parts.append(
+                    f"{n_signals_below_stop} would-fill at/under stop"
+                )
+            else:
+                parts.append("no fill recorded")
+            reason = "; ".join(parts)
+        else:
+            reason = (
+                f"no full trigger in {n_bars_in_window} in-window bars "
+                f"(cap={n_cap_hits} crossover={n_crossover_hits} "
+                f"relatr>=0.3={n_relatr_gate_hits})"
+            )
+        logger.info(
+            "%s %s: replayed %d bars, no trade -- %s",
+            symbol, session_date, len(bars), reason,
+        )
     return trades
